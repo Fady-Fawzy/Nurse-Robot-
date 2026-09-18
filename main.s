@@ -175,13 +175,13 @@ SERVO_0_DEG   EQU 1200
 SERVO_90_DEG  EQU 500      
 	
 DROP_TOLERANCE    EQU 2   
-STATE_MAIN_MENU   EQU 0
-STATE_SUISEI_MENU EQU 1
-STATE_WA_MENU     EQU 2
-STATE_KYO_MENU    EQU 3
-STATE_MO_MENU     EQU 4
-STATE_KAWAII_MENU EQU 5
-STATE_HOSHIYOME_MENU EQU 6
+STATE_MAIN_MENU   EQU 0  ; Main dashboard overview screen
+STATE_SUISEI_MENU EQU 1  ; Submenu 1: Room Temperature history log
+STATE_WA_MENU     EQU 2  ; Submenu 2: Heart Rate trend chart
+STATE_KYO_MENU    EQU 3  ; Submenu 3: SpO2 oxygen saturation trend chart
+STATE_MO_MENU     EQU 4  ; Submenu 4: Body temperature history log
+STATE_KAWAII_MENU EQU 5  ; Submenu 5: Bed pressure history log
+STATE_HOSHIYOME_MENU EQU 6 ; Submenu 6: IV drop rate configuration screen
 
 
 
@@ -888,29 +888,29 @@ move_to_90
     B check_events
 
 check_events
+    ; Poll USART1 for incoming Bluetooth commands from mobile app
     BL BT_Get_Data
     CMP R0, #0               
-    BEQ check_ir_events     
+    BEQ check_ir_events     ; No Bluetooth byte received: check IR remote events
     
-    
+    ; Command 0x9A: Mobile app requesting full vital signs telemetry stream
     CMP R0, #0x9A            
     BNE skip_bt_send          
     BL BT_Send_Sensor_Data    
     B main_loop               
 skip_bt_send                
     
-
-    
+    ; Virtual directional buttons received via Bluetooth
     CMP R0, #0x95             
-    BEQ bt_down
+    BEQ bt_down             ; 0x95: Move cursor DOWN
     CMP R0, #0xA6             
-    BEQ bt_up
+    BEQ bt_up               ; 0xA6: Move cursor UP
     CMP R0, #0xA4             
-    BEQ bt_left
+    BEQ bt_left             ; 0xA4: Back / Exit submenu
     CMP R0, #0xA0            
-    BEQ bt_ok
+    BEQ bt_ok               ; 0xA0: OK / Confirm selection
 
-   
+    ; Command 0x96: Switch robot to autonomous corridor delivery mode
     CMP R0, #0x96
     BNE bt_not_1
     BL  Enter_Robot_Mode
@@ -924,8 +924,8 @@ skip_bt_send
     B   main_loop
 bt_not_1
 	
-	
-	CMP R0, #0x99            
+    ; Map secondary shortcut commands to corresponding virtual buttons
+    CMP R0, #0x99            
     MOVEQ R4, #BUTTON_2
     CMP R0, #0x8C            
     MOVEQ R4, #BUTTON_4
@@ -934,12 +934,12 @@ bt_not_1
     CMP R0, #0xBE             
     MOVEQ R4, #BUTTON_6
 	
-	
-	LDR R5, =active_btn
+    ; Toggle button state / indicator lines
+    LDR R5, =active_btn
     LDRB R6, [R5]
     CMP R4, R6
     BEQ gpio_off
-	CMP R0, #0x99            
+    CMP R0, #0x99            
     BEQ check_b2
     CMP R0, #0x8C             
     BEQ check_b4
@@ -949,7 +949,6 @@ bt_not_1
     BEQ check_b6
     B check_ir_events        
 	
-
 bt_left
     MOV R4, #BUTTON_LEFT     
     B continue_logic         
@@ -962,24 +961,28 @@ bt_down
 bt_ok
     MOV R4, #BUTTON_OK
     B continue_logic
+
 check_ir_events
+    ; Check if an NEC remote command was decoded by EXTI9_5 ISR
     LDR R0, =ir_flag
     LDRB R1, [R0]
     CMP R1, #0            
-    BEQ main_loop         
+    BEQ main_loop           ; No input: resume supervisor loop
     
+    ; Clear IR pending flag
     MOV R1, #0
     STRB R1, [R0]
     
     LDR R0, =ir_command
     LDRB R4, [R0]         
 
-    
+    ; Remote Key [1]: Launch autonomous corridor patrol & delivery mode
     CMP     R4, #BUTTON_1
     BNE     after_robot_check
     
     BL      Enter_Robot_Mode
     
+    ; Reset display state to main dashboard upon return
     MOV     R11, #STATE_MAIN_MENU
     LDR     R0, =screen_state
     STRB    R11, [R0]

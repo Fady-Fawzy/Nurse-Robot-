@@ -3,7 +3,7 @@
     
     EXPORT ARM_INIT
 
-; Memory mapped registers for Clock and GPIO configuration
+; Base addresses and register offsets for Clock and GPIO
 GPIOB_BASE      EQU 0x40020400
 GPIOA_BASE      EQU 0x40020000
 GPIO_MODER      EQU 0x00
@@ -13,7 +13,7 @@ RCC_AHB1ENR     EQU 0x30
 RCC_APB1ENR     EQU 0x40 
 RCC_APB2ENR     EQU 0x44 
 
-; TIM3 Registers for multi-channel PWM control (to move 4 servos)
+; TIM3 register offsets for 4-channel servo PWM generation
 TIM3_BASE       EQU 0x40000400  
 TIM_CR1         EQU 0x00
 TIM_EGR         EQU 0x14
@@ -27,90 +27,92 @@ TIM_CCR2        EQU 0x38
 TIM_CCR3        EQU 0x3C       
 TIM_CCR4        EQU 0x40
 
-; Initializes TIM3 and its corresponding GPIO pins to output PWM signals for the Robotic Arm
+; ==============================================================================
+; ARM_INIT: Configures TIM3 and GPIO pins (PA6, PA7, PB0, PB1) to output 50Hz PWM
+; for the 4-DOF robotic arm (Base, Shoulder, Elbow, Gripper)
+; ==============================================================================
 ARM_INIT
-	LDR R0, =RCC_BASE  
+    LDR R0, =RCC_BASE  
     
-    ; Enable Clock for GPIOA and GPIOB (AHB1 Bus)
+    ; Enable GPIOA and GPIOB peripheral clocks on AHB1
     LDR R1, [R0, #RCC_AHB1ENR]
     ORR R1, R1, #0x03          
     STR R1, [R0, #RCC_AHB1ENR]
     
-    ; Enable Clock for SYSCFG and potentially other APB2 peripherals
+    ; Enable SYSCFG clock on APB2
     LDR R1, [R0, #RCC_APB2ENR]
     ORR R1, R1, #(1 << 14)     
     STR R1, [R0, #RCC_APB2ENR]
     
-    ; Enable Clock for TIM3 (APB1 Bus, bit 1)
+    ; Enable TIM3 clock on APB1 (bit 1)
     LDR R1, [R0, #RCC_APB1ENR]
     ORR R1, R1, #0x02          
     STR R1, [R0, #RCC_APB1ENR]
 
-    ; Configure GPIOA pins (PA6, PA7) for Alternate Function mode (AF)
+    ; Configure PA6 (CH1) and PA7 (CH2) for Alternate Function mode
     LDR R0, =GPIOA_BASE
     LDR R1, [R0, #GPIO_MODER]
-    LDR R2, =0xF000            ; Clear mode bits for PA6, PA7
+    LDR R2, =0xF000            ; Mask MODER6 and MODER7
     BIC R1, R1, R2             
-    LDR R2, =0xA000            ; Set mode bits to 10 (Alternate Function)
+    LDR R2, =0xA000            ; Set mode '10' (AF) for both pins
     ORR R1, R1, R2          
     STR R1, [R0, #GPIO_MODER]
 
-    ; Assign Alternate Function 2 (TIM3) to PA6 and PA7
+    ; Route PA6 and PA7 to AF2 (TIM3_CH1 and TIM3_CH2)
     LDR R1, [R0, #GPIO_AFRL]
-    LDR R2, =0xFF000000        ; Clear AF bits for pins 6 and 7
+    LDR R2, =0xFF000000        ; Clear AFRL6 and AFRL7
     BIC R1, R1, R2             
-    LDR R2, =0x22000000        ; Set AF2 for pins 6 and 7
+    LDR R2, =0x22000000        ; AF2 = 0x2
     ORR R1, R1, R2
     STR R1, [R0, #GPIO_AFRL]
 
-
-    ; Configure GPIOB pins (PB0, PB1) for Alternate Function mode (AF)
+    ; Configure PB0 (CH3) and PB1 (CH4) for Alternate Function mode
     LDR R0, =GPIOB_BASE
     LDR R1, [R0, #GPIO_MODER]
-    BIC R1, R1, #0x0F          ; Clear mode bits for PB0, PB1
-    ORR R1, R1, #0x0A          ; Set mode bits to 10 (Alternate Function)
+    BIC R1, R1, #0x0F          ; Clear MODER0 and MODER1
+    ORR R1, R1, #0x0A          ; Set mode '10' (AF)
     STR R1, [R0, #GPIO_MODER]
 
-    ; Assign Alternate Function 2 (TIM3) to PB0 and PB1
+    ; Route PB0 and PB1 to AF2 (TIM3_CH3 and TIM3_CH4)
     LDR R1, [R0, #GPIO_AFRL]
-    BIC R1, R1, #0xFF         ; Clear AF bits for pins 0 and 1
-    ORR R1, R1, #0x22          ; Set AF2 for pins 0 and 1
+    BIC R1, R1, #0xFF          ; Clear AFRL0 and AFRL1
+    ORR R1, R1, #0x22          ; AF2 = 0x2
     STR R1, [R0, #GPIO_AFRL]
 
-    ; Setup TIM3 to generate a 50Hz PWM signal (standard for servo motors)
-    ; Assuming 16MHz clock, prescaler = 15 -> 1MHz timer clock (1 tick = 1us)
+    ; Set up TIM3 timebase for 50Hz (20ms servo frame)
+    ; With a 16MHz clock, prescaler = 15 gives 1MHz counter clock (1 tick = 1 microsecond)
     LDR R0, =TIM3_BASE
     LDR R1, =15                
     STR R1, [R0, #TIM_PSC]
-    LDR R1, =19999             ; Auto-Reload Register: 20000 ticks = 20ms period (50Hz)
+    LDR R1, =19999             ; ARR = 20,000 ticks -> 20ms period (50Hz)
     STR R1, [R0, #TIM_ARR]
     
-    ; Configure TIM3 Channels 1-4 for PWM Mode 1 (Toggle output on compare match)
+    ; Set PWM Mode 1 with preload enabled on all four channels
     LDR R1, =0x6868           
     STR R1, [R0, #TIM_CCMR1]   ; CH1 and CH2
     LDR R1, =0x6868            
     STR R1, [R0, #TIM_CCMR2]   ; CH3 and CH4
     
-    ; Enable outputs for all 4 channels
+    ; Enable outputs for channels 1 through 4 (active high)
     LDR R1, =0x1111            
     STR R1, [R0, #TIM_CCER]
 
-    ; Set initial servo positions (Pulse width in microseconds)
-    ; Usually, 1500us is center (90 deg), 500us is 0 deg, 2500us is 180 deg.
+    ; Default neutral/park positions for servos (pulse width in microseconds)
+    ; Nominal SG90 range: ~500us (0 deg) to ~2500us (180 deg), center at 1500us
     LDR R1, =1600              
-    STR R1, [R0, #TIM_CCR1]    ; Servo 1 pulse width
+    STR R1, [R0, #TIM_CCR1]    ; Servo 1: Shoulder default
     LDR R1, =1500              
-    STR R1, [R0, #TIM_CCR2]    ; Servo 2 pulse width
+    STR R1, [R0, #TIM_CCR2]    ; Servo 2: Base default
     LDR R1, =500               
-    STR R1, [R0, #TIM_CCR3]    ; Servo 3 pulse width
+    STR R1, [R0, #TIM_CCR3]    ; Servo 3: Elbow default
     LDR R1, =500               
-    STR R1, [R0, #TIM_CCR4]    ; Servo 4 pulse width
+    STR R1, [R0, #TIM_CCR4]    ; Servo 4: Gripper default (closed/stowed)
     
-    ; Generate an update event to load the prescaler and start the timer
+    ; Trigger update event to latch prescaler/ARR, then start the counter
     MOV R1, #1
     STR R1, [R0, #TIM_EGR]     
     STR R1, [R0, #TIM_CR1]     
-	
-	BX LR
+    
+    BX LR
 
     END

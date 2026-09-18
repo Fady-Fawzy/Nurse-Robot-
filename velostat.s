@@ -1,53 +1,56 @@
-; Memory mapped registers for Clock, GPIO, and ADC1
-RCC_AHB1ENR  EQU 0x40023830  ; Advanced High-performance Bus 1 Enable Register (for GPIO)
-RCC_APB2ENR  EQU 0x40023844  ; Advanced Peripheral Bus 2 Enable Register (for ADC1)
-GPIOA_MODER  EQU 0x40020000  ; GPIO Port A Mode Register
-ADC1_SR      EQU 0x40012000  ; ADC1 Status Register
-ADC1_CR1     EQU 0x40012004  ; ADC1 Control Register 1
-ADC1_CR2     EQU 0x40012008  ; ADC1 Control Register 2
-ADC1_SQR3    EQU 0x40012034  ; ADC1 Regular Sequence Register 3
-ADC1_DR      EQU 0x4001204C  ; ADC1 Data Register
+; Peripheral register addresses for Clock, GPIO, and ADC1
+RCC_AHB1ENR  EQU 0x40023830  ; AHB1 clock enable (GPIOA)
+RCC_APB2ENR  EQU 0x40023844  ; APB2 clock enable (ADC1)
+GPIOA_MODER  EQU 0x40020000  ; GPIOA mode register
+ADC1_SR      EQU 0x40012000  ; ADC1 status register (EOC flag)
+ADC1_CR1     EQU 0x40012004  ; ADC1 control register 1
+ADC1_CR2     EQU 0x40012008  ; ADC1 control register 2 (ADON, SWSTART)
+ADC1_SQR3    EQU 0x40012034  ; ADC1 regular sequence register 3
+ADC1_DR      EQU 0x4001204C  ; ADC1 regular data register (12-bit result)
 
             AREA    |.text|, CODE, READONLY
             
             EXPORT  init_velostat
             EXPORT  read_velostat
 
-; Initializes the ADC1 to read analog values from the Velostat sensor on PA0
+; ==============================================================================
+; init_velostat: Configures ADC1 Channel 0 (PA0) for single-conversion readings
+; from the Velostat piezoresistive pressure divider circuit
+; ==============================================================================
 init_velostat
             PUSH {R0-R2, LR}         
 
-            ; Enable the clock for GPIOA
+            ; Enable GPIOA clock
             LDR R0, =RCC_AHB1ENR
             LDR R1, [R0]
             ORR R1, R1, #0x01        
             STR R1, [R0]
 
-            ; Enable the clock for ADC1
+            ; Enable ADC1 peripheral clock (bit 8 on APB2)
             LDR R0, =RCC_APB2ENR
             LDR R1, [R0]
-            ORR R1, R1, #0x0100      ; Set bit 8 to enable ADC1 clock
+            ORR R1, R1, #0x0100      
             STR R1, [R0]
 
-            ; Configure PA0 as Analog Input Mode
+            ; Set PA0 to Analog mode (bits 1:0 = 11) to disable digital Schmitt triggers
             LDR R0, =GPIOA_MODER
             LDR R1, [R0]
-            ORR R1, R1, #0x03        ; Set bits 0 and 1 to 11 (Analog mode) for Pin 0
+            ORR R1, R1, #0x03        
             STR R1, [R0]
 
-            ; Configure ADC1 to read from Channel 0 (PA0) as the first conversion in the regular sequence
+            ; Set Channel 0 (PA0) as the first conversion in regular sequence (SQ1)
             LDR R0, =ADC1_SQR3
             LDR R1, [R0]
-            BIC R1, R1, #0x1F        ; Clear the first 5 bits (SQ1) to select Channel 0
+            BIC R1, R1, #0x1F        ; Clear SQ1 bits to select CH0
             STR R1, [R0]
 
-            ; Turn on the ADC
+            ; Power on the ADC (set ADON bit)
             LDR R0, =ADC1_CR2
             LDR R1, [R0]
-            ORR R1, R1, #0x01        ; Set ADON bit to power up the ADC
+            ORR R1, R1, #0x01        
             STR R1, [R0]
 
-            ; Wait for the ADC to stabilize after powering up
+            ; Wait for ADC internal reference and analog circuitry to stabilize (tSTAB)
             LDR R2, =10000
 Delay_Init
             SUBS R2, R2, #1
@@ -56,26 +59,28 @@ Delay_Init
             POP {R0-R2, PC}         
 
 
-; Triggers a new conversion and returns the analog reading in R0
+; ==============================================================================
+; read_velostat: Triggers a single conversion on PA0 and returns 12-bit value in R0
+; ==============================================================================
 read_velostat
             PUSH {R1, LR}           
             
-            ; Start the ADC conversion
+            ; Start conversion by setting SWSTART bit in CR2
             LDR R0, =ADC1_CR2
             LDR R1, [R0]
-            ORR R1, R1, #0x40000000  ; Set SWSTART bit to begin conversion of regular channels
+            ORR R1, R1, #0x40000000  
             STR R1, [R0]
 
 Wait_EOC
-            ; Polling loop: Wait for End Of Conversion (EOC) flag to be set
+            ; Poll for End Of Conversion flag (SR bit 1)
             LDR R0, =ADC1_SR
             LDR R1, [R0]
-            ANDS R1, R1, #0x02       ; Check the EOC bit (bit 1)
-            BEQ Wait_EOC             ; If not set, keep waiting
+            ANDS R1, R1, #0x02       
+            BEQ Wait_EOC             ; Keep polling until conversion finishes
 
-            ; Read the 12-bit converted value from the Data Register
+            ; Read 12-bit result (reading DR also clears the EOC flag)
             LDR R0, =ADC1_DR
-            LDR R0, [R0]             ; The result is stored in R0 to be returned to the caller
+            LDR R0, [R0]             
 
             POP {R1, PC}             
             
